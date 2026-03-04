@@ -19,7 +19,7 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from agent_memory_client import AgentMemoryClient, MemoryTarget
@@ -116,6 +116,145 @@ class MemoryManagerAgent:
             score=score,
             **metadata,
         )
+
+    @staticmethod
+    def _format_utc_time(dt: datetime) -> str:
+        """Format datetime into stable UTC string used by this module."""
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _parse_ttl_seconds(value: Any) -> int | None:
+        """Normalize metadata TTL values into seconds."""
+        if value is None:
+            return None
+        try:
+            ttl = int(value)
+        except (TypeError, ValueError):
+            return None
+        return ttl if ttl >= 0 else None
+
+    @staticmethod
+    def _resolve_expiry(row: dict[str, Any]) -> datetime | None:
+        """Resolve expiration time from metadata fields, if any."""
+        metadata = row.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return None
+
+        expires_at = metadata.get("expires_at")
+        dt = MemoryManagerAgent._parse_time(expires_at)
+        if dt is not None:
+            return dt
+
+        ttl_seconds = MemoryManagerAgent._parse_ttl_seconds(metadata.get("ttl_seconds"))
+        if ttl_seconds is None:
+            return None
+
+        base_time = MemoryManagerAgent._parse_time(
+            row.get("time_modified") or row.get("time_created") or row.get("message_time"),
+        )
+        if base_time is None:
+            return None
+        return base_time + timedelta(seconds=ttl_seconds)
+
+    @staticmethod
+    def _is_short_lived_memory(row: dict[str, Any]) -> bool:
+        metadata = row.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return False
+        return bool(metadata.get("short_lived")) or metadata.get("memory_policy") == "short_lived"
+
+    @staticmethod
+    def _is_expired(row: dict[str, Any], now: datetime | None = None) -> bool:
+        expiry = MemoryManagerAgent._resolve_expiry(row)
+        if expiry is None:
+            return False
+        now = now or datetime.now(tz=timezone.utc)
+        return expiry <= now
+
+    async def store_short_lived(
+        self,
+        content: str,
+        when_to_use: str = "",
+        score: float = 0.7,
+        ttl_hours: int = 24,
+        **metadata: Any,
+    ) -> Any:
+        """Store short-lived episodic memory with explicit TTL metadata."""
+        now = datetime.now(tz=timezone.utc)
+        ttl_seconds = max(int(ttl_hours * 3600), 0)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+
+        payload = {
+            "short_lived": True,
+            "memory_policy": "short_lived",
+            "ttl_seconds": ttl_seconds,
+            "expires_at": self._format_utc_time(expires_at),
+            "stored_at": self._format_utc_time(now),
+            **metadata,
+        }
+        return await self.add(
+            layer="episodic",
+            content=content,
+            when_to_use=when_to_use,
+            score=score,
+            **payload,
+        )
+
+    async def retrieve_short_lived(
+        self,
+        query: str,
+        top_k: int = 10,
+        vector_weight: float = 0.7,
+        include_expired: bool = False,
+    ) -> dict[str, Any]:
+        """Retrieve non-expired short-lived episodic memories."""
+        cfg = self.layers["episodic"]
+        # Over-fetch so post-filtering on expiry still returns useful results.
+        candidate_k = min(max(top_k * 5, top_k), 100)
+        resp = await self.client.retrieve_memory(
+            target=cfg.target,
+            query=query,
+            top_k=candidate_k,
+            strategy="hybrid",
+            vector_weight=vector_weight,
+        )
+
+        now = datetime.now(tz=timezone.utc)
+        results: list[dict[str, Any]] = []
+        expired_filtered = 0
+        non_short_lived_filtered = 0
+
+        for item in resp.get("results", []):
+            if not self._is_short_lived_memory(item):
+                non_short_lived_filtered += 1
+                continue
+            if not include_expired and self._is_expired(item, now=now):
+                expired_filtered += 1
+                continue
+            results.append(item)
+
+        # Apply same recency-aware rerank style as nuanced query, but scoped to short-lived episodic memories.
+        for item in results:
+            base_score = float(item.get("score", 0.0))
+            recency = self._recency_boost(item.get("time_modified") or item.get("message_time"))
+            item["layer"] = "episodic"
+            item["recency_boost"] = recency
+            item["final_score"] = base_score * cfg.layer_weight + recency * 0.25
+
+        results.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+        results = results[:top_k]
+
+        return {
+            "query": query,
+            "strategy": "short_lived_hybrid",
+            "layer": "episodic",
+            "include_expired": include_expired,
+            "results": results,
+            "filtered": {
+                "expired": expired_filtered,
+                "non_short_lived": non_short_lived_filtered,
+            },
+        }
 
     @staticmethod
     def _parse_time(value: str | None) -> datetime | None:
@@ -314,10 +453,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("--when-to-use", default="")
     add_p.add_argument("--score", type=float, default=0.7)
 
+    add_short_p = sub.add_parser("add-short-lived", help="Add short-lived episodic memory with TTL")
+    add_short_p.add_argument("--content", required=True)
+    add_short_p.add_argument("--when-to-use", default="")
+    add_short_p.add_argument("--score", type=float, default=0.7)
+    add_short_p.add_argument("--ttl-hours", type=int, default=24, help="TTL in hours (default: 24)")
+
     q_p = sub.add_parser("query", help="Nuanced retrieval across layers")
     q_p.add_argument("--query", required=True)
     q_p.add_argument("--top-k", type=int, default=10)
     q_p.add_argument("--vector-weight", type=float, default=0.7)
+
+    q_short_p = sub.add_parser("query-short-lived", help="Retrieve short-lived episodic memories")
+    q_short_p.add_argument("--query", required=True)
+    q_short_p.add_argument("--top-k", type=int, default=10)
+    q_short_p.add_argument("--vector-weight", type=float, default=0.7)
+    q_short_p.add_argument("--include-expired", action="store_true")
 
     s_p = sub.add_parser("show", help="Show one layer")
     s_p.add_argument("--layer", choices=["episodic", "semantic", "long_term"], required=True)
@@ -344,11 +495,29 @@ async def _main_async(args: argparse.Namespace) -> None:
             )
             print(json.dumps({"status": "ok", "memory_id": result.memory_id}, ensure_ascii=False, indent=2))
 
+        elif args.command == "add-short-lived":
+            result = await agent.store_short_lived(
+                content=args.content,
+                when_to_use=args.when_to_use,
+                score=args.score,
+                ttl_hours=args.ttl_hours,
+            )
+            print(json.dumps({"status": "ok", "memory_id": result.memory_id}, ensure_ascii=False, indent=2))
+
         elif args.command == "query":
             result = await agent.query_nuanced(
                 query=args.query,
                 top_k=args.top_k,
                 vector_weight=args.vector_weight,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+
+        elif args.command == "query-short-lived":
+            result = await agent.retrieve_short_lived(
+                query=args.query,
+                top_k=args.top_k,
+                vector_weight=args.vector_weight,
+                include_expired=args.include_expired,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
 
