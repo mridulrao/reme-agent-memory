@@ -1,0 +1,10 @@
+{
+  "memories": [
+    {
+      "layer": "semantic",
+      "content": "User's name is Mridul Rao.",
+      "when_to_use": "Use when asked for the user's name, identity, or how to address the user.",
+      "score": 0.9
+    }
+  ]
+}

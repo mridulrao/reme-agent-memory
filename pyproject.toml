@@ -1,0 +1,125 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reme_ai"
+dynamic = ["version"]
+description = "Remember Me, Refine Me."
+authors = [
+    { name = "jinli.yl", email = "jinli.yl@alibaba-inc.com" },
+    { name = "dengjiaji.djj", email = "dengjiaji.djj@alibaba-inc.com" },
+    { name = "caozouying.czy", email = "caozouying.czy@alibaba-inc.com" },
+    { name = "weikangzhou.zwk", email = "weikangzhou.zwk@alibaba-inc.com" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
+
+keywords = ["llm", "memory", "experience", "memoryscope", "ai", "mcp", "http", "reme", "personal"]
+
+dependencies = [
+    "flowllm[reme]>=0.2.0.10",
+    "sqlite-vec>=0.1.6",
+    "prompt_toolkit>=3.0.52",
+    "rich>=14.2.0",
+    "asyncpg>=0.31.0",
+    "chromadb>=1.3.5",
+    "dashscope>=1.25.1",
+    "elasticsearch>=9.2.0",
+    "fastapi>=0.121.3",
+    "fastmcp>=2.14.1",
+    "httpx>=0.28.1",
+    "litellm>=1.80.0",
+    "loguru>=0.7.3",
+    "mcp>=1.25.0",
+    "numpy>=2.2.6",
+    "openai>=2.8.1",
+    "pandas>=2.3.3",
+    "pydantic>=2.12.4",
+    "qdrant-client>=1.16.0",
+    "tavily-python>=0.7.13",
+    "tiktoken>=0.12.0",
+    "tqdm>=4.67.1",
+    "transformers>=4.57.3",
+    "uvicorn>=0.40.0",
+    "watchfiles>=1.1.1",
+    "pyyaml>=6.0.3",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
+
+[project.optional-dependencies]
+ray = [
+    "ray",
+]
+
+dev = [
+    "jupyter-book",
+    "ghp-import",
+    "myst-nb",
+    "sphinxcontrib-bibtex",
+    "furo",
+    "sphinxcontrib-mermaid",
+    "pre-commit",
+]
+
+full = [
+    "reme_ai[dev,ray]"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reme_ai*", "reme*"]
+exclude = ["test*", "cookbook*", "doc*", "library*", "dist*"]
+
+[tool.setuptools.package-data]
+reme_ai = [
+    "**/*.yaml",
+    "**/*.py",
+    "**/*.json",
+]
+
+reme = [
+    "**/*.yaml",
+    "**/*.py",
+    "**/*.json",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "reme.__version__" }
+
+[project.urls]
+Homepage = "https://github.com/agentscope-ai/ReMe"
+Documentation = "https://reme.agentscope.io/"
+Repository = "https://github.com/agentscope-ai/ReMe"
+
+[project.scripts]
+reme = "reme_ai.main:main"
+reme2 = "reme.reme:main"
+remecli = "reme.reme_cli:main"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+# Script-style tests that need to be run with `python test_*.py`
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+# Exclude script-style tests that require manual execution
+addopts = "--ignore=tests/test_embedding.py --ignore=tests/test_embedding_cache.py --ignore=tests/test_embedding_sync.py --ignore=tests/test_file_store.py"
+
+# python -m build && twine upload dist/*
