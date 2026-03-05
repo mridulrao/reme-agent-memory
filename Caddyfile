@@ -1,0 +1,13 @@
+{
+  email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+  encode gzip zstd
+
+  # Serve memory API under /memory/*
+  redir /memory /memory/ 308
+  handle_path /memory/* {
+    reverse_proxy api:8000
+  }
+}
