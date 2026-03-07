@@ -1,5 +1,10 @@
-{$DOMAIN} {
+https://{$DOMAIN} {
   encode gzip zstd
+
+  # Enforce HTTPS for clients that have seen this host.
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+  }
 
   # Serve memory API under /memory/*
   redir /memory /memory/ 308
