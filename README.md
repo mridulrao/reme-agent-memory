@@ -19,15 +19,15 @@ docker compose up -d --build
 
 ## 4) Verify
 ```bash
-curl -s https://$DOMAIN/memory/health
+curl -s https://$DOMAIN/health
 ```
 
 ## API routes
-- `POST /memory/memories`
-- `POST /memory/memories/query`
-- `POST /memory/memories/short-lived`
-- `POST /memory/memories/short-lived/query`
-- `GET /memory/health`
+- `POST /memories`
+- `POST /memories/query`
+- `POST /memories/short-lived`
+- `POST /memories/short-lived/query`
+- `GET /health`
 
 ## Notes
 - Caddy auto-manages TLS certificates via Let's Encrypt.
